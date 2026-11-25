@@ -7,17 +7,18 @@ def sanitize_api_key(api_key: Optional[str]) -> Optional[str]:
     Sanitizes Gemini API key by removing zero-width characters (e.g. \\u200b, \\ufeff),
     invisible Unicode spaces, smart quotes, and non-ASCII artifacts.
     Guarantees the key contains strictly valid ASCII characters.
+    Supports standard AI Studio keys (AIzaSy...) as well as service/tokens with dots (AQ....).
     """
     if not api_key:
         return None
     key_str = str(api_key).strip()
     # Check if standard Google AI Studio key format (AIzaSy...)
-    match = re.search(r'(AIzaSy[a-zA-Z0-9_\-]+)', key_str)
+    match = re.search(r'(AIzaSy[a-zA-Z0-9_\-\.]+)', key_str)
     if match:
         return match.group(1).strip()
-    # Otherwise strip all non-ASCII characters and whitespace
+    # Otherwise strip all non-ASCII characters and whitespace while preserving dots
     clean_ascii = key_str.encode("ascii", errors="ignore").decode("ascii").strip()
-    clean_key = re.sub(r'[^a-zA-Z0-9_\-]', '', clean_ascii)
+    clean_key = re.sub(r'[^a-zA-Z0-9_\-\.]', '', clean_ascii)
     return clean_key if clean_key else None
 
 def get_gemini_client(api_key: Optional[str] = None):
