@@ -1247,7 +1247,6 @@ elif st.session_state.screen == "quiz":
 
                 grid_html = f"""<div class="options-grid">{''.join(boxes)}</div>"""
                 st.markdown(grid_html, unsafe_allow_html=True)
-                st.markdown(grid_html, unsafe_allow_html=True)
 
                 # Fetch or retrieve explanation
                 if q_uid not in st.session_state.gemini_cache:
