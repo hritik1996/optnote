@@ -498,5 +498,63 @@ ANSWERS - CHAPTER 2
         found_updated, _ = db_manager.search_questions("converting it into information is called test")
         self.assertEqual(found_updated[0]["correct_answer"], "A")
 
+    def test_format_study_notes_html_tables_and_tricks(self):
+        from mcq_parser import format_study_notes_html
+
+        raw_notes = """📘 Answer Explanation (Context)
+DICGC क्या है?
+Deposit Insurance and Credit Guarantee Corporation.
+Exam Important Points
+विषय\tजानकारी
+Full Form\tDeposit Insurance and Credit Guarantee Corporation
+Insurance Limit\t₹5 लाख
+Coverage\tप्रति जमाकर्ता, प्रति बैंक
+याद रखने की Trick: DICGC → RBI → ₹5 Lakh
+Important: एक ही बैंक की अलग-अलग शाखाओं में जमा राशि जोड़कर ₹5 लाख की सीमा लागू होती है।
+• Point 1: Savings and Current
+• Point 2: Fixed and Recurring"""
+
+        html_out = format_study_notes_html(raw_notes)
+        self.assertIn("<table class=\"notes-table\"", html_out, "Tab-separated text must generate HTML table")
+        self.assertIn(">विषय</th>", html_out, "First row should be table header")
+        self.assertIn(">जानकारी</th>", html_out, "First row should be table header")
+        self.assertIn(">Full Form</td>", html_out, "Data cells must be wrapped in td")
+        self.assertIn(">₹5 लाख</td>", html_out, "Data cells must be wrapped in td")
+        self.assertIn("💡", html_out, "Trick lines should have highlight/trick icon")
+        self.assertIn("•", html_out, "Bullet points should be formatted")
+
+    def test_csv_parser_with_multichannel_notes(self):
+        from mcq_parser import parse_csv_file
+        
+        # Test freeform CSV with multi-column cells and numbered ordering
+        raw_csv = '''"English: SBI Card and Google Pay launched which card?
+Hindi: SBI कार्ड और Google Pay ने कौन-सा कार्ड लॉन्च किया?
+विकल्प (Options):
+• A) Google Pay Flex SBI Card
+• B) SBI Pay Smart Card
+सही उत्तर (Correct Answer):
+• A) Google Pay Flex SBI Card",,"3. More info on card",,,,"1. Joining fee is 499"'''
+        
+        qs = parse_csv_file(raw_csv)
+        self.assertEqual(len(qs), 1)
+        q = qs[0]
+        self.assertEqual(q["correct_answer"], "A")
+        self.assertIn("Google Pay Flex SBI Card", q["options"]["A"])
+        # Check that 1. comes before 3. due to ordered sort key
+        self.assertTrue(q["explanation"].index("1. Joining fee") < q["explanation"].index("3. More info"))
+
+    def test_csv_delimiter_support(self):
+        from mcq_parser import parse_csv_file
+
+        tsv_data = "Question\tOption A\tOption B\tOption C\tOption D\tAnswer\tExplanation\nWhat is repo rate?\tRate 1\tRate 2\tRate 3\tRate 4\tB\tRepo rate is lending rate."
+        qs_tsv = parse_csv_file(tsv_data)
+        self.assertEqual(len(qs_tsv), 1)
+        self.assertEqual(qs_tsv[0]["correct_answer"], "B")
+
+        semicolon_data = "Question;Option A;Option B;Option C;Option D;Answer;Explanation\nWhat is reverse repo?;Opt 1;Opt 2;Opt 3;Opt 4;C;Reverse repo is borrowing rate."
+        qs_semi = parse_csv_file(semicolon_data)
+        self.assertEqual(len(qs_semi), 1)
+        self.assertEqual(qs_semi[0]["correct_answer"], "C")
+
 if __name__ == "__main__":
     unittest.main()

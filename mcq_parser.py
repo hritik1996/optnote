@@ -804,7 +804,10 @@ def parse_csv_file(file_or_content, default_topic: str = "Financial Awareness") 
         return []
 
     # 2. Parse CSV rows
-    delimiter = "\t" if "\t" in text_content and text_content.count("\t") > text_content.count(",") else ","
+    t_counts = {"\t": text_content.count("\t"), ",": text_content.count(","), ";": text_content.count(";")}
+    delimiter = max(t_counts, key=t_counts.get)
+    if t_counts[delimiter] == 0:
+        delimiter = ","
     try:
         reader = csv.reader(io.StringIO(text_content), delimiter=delimiter)
         raw_rows = list(reader)
@@ -911,8 +914,12 @@ def parse_csv_file(file_or_content, default_topic: str = "Financial Awareness") 
             parsed = parse_single_mcq_block(mcq_cell, default_num=q_counter, topic=default_topic)
             if parsed and parsed.get("options") and len(parsed["options"]) >= 2:
                 if desc_cells:
+                    def _cell_sort_key(cell_text: str):
+                        m = re.match(r'^\s*(\d+)[\.\)]', cell_text.strip())
+                        return (0, int(m.group(1))) if m else (1, 0)
+                    desc_cells_sorted = sorted(desc_cells, key=_cell_sort_key)
                     existing = parsed.get("explanation", "").strip()
-                    desc_text = "\n\n".join(desc_cells)
+                    desc_text = "\n\n".join(desc_cells_sorted)
                     parsed["explanation"] = f"{existing}\n\n{desc_text}".strip() if existing else desc_text
                 parsed["uid"] = f"q_{q_counter}"
                 parsed["question_number"] = q_counter
@@ -979,4 +986,82 @@ def prepare_questions_list(q_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]
         if "trap_info" not in q:
             q["trap_info"] = analyze_exam_trap(q.get("question_text", ""), q.get("options", {}))
     return q_list
+
+def format_study_notes_html(text: str) -> str:
+    """
+    Converts raw study notes / explanations (from CSV, PDF, or Database) into clean, modern HTML.
+    Features:
+    - Parses tab-separated (\\t) and markdown pipe (|) tables into responsive styled HTML <table> elements.
+    - Highlights exam trick / mnemonic boxes ('याद रखने की Trick:', 'Exam Note:', 'Important:', etc.) with warm amber alert styling.
+    - Highlights section headers ('Exam Important Points', 'Answer Explanation', '1. ...', etc.) with bold navy styling.
+    - Formats bullet points (•, -, *) cleanly.
+    - Converts markdown bold (**text**) to <strong>text</strong>.
+    - Safely escapes raw HTML entities.
+    """
+    import html
+    if not text or not str(text).strip():
+        return ""
+    
+    lines = str(text).strip().splitlines()
+    html_parts = []
+    table_rows = []
+    
+    def flush_table():
+        if not table_rows:
+            return
+        t_html = ['<div style="overflow-x:auto; margin:6px 0;"><table class="notes-table" style="width:100%; border-collapse:collapse; font-size:0.80rem; border:1px solid #cbd5e1; border-radius:6px; overflow:hidden;">']
+        for row_i, r in enumerate(table_rows):
+            if row_i == 0:
+                t_html.append('<tr style="background:#e0e7ff; color:#1e3a8a; font-weight:700;">')
+                for cell in r:
+                    t_html.append(f'<th style="border:1px solid #c7d2fe; padding:6px 10px; text-align:left;">{html.escape(cell)}</th>')
+                t_html.append('</tr>')
+            else:
+                bg = '#ffffff' if row_i % 2 == 1 else '#f8fafc'
+                t_html.append(f'<tr style="background:{bg};">')
+                for cell in r:
+                    t_html.append(f'<td style="border:1px solid #e2e8f0; padding:5px 10px; color:#1e293b;">{html.escape(cell)}</td>')
+                t_html.append('</tr>')
+        t_html.append('</table></div>')
+        html_parts.append(''.join(t_html))
+        table_rows.clear()
+
+    for line in lines:
+        s = line.strip()
+        if not s:
+            flush_table()
+            continue
+        
+        # Check if tab-separated line
+        if '\t' in s:
+            cols = [c.strip() for c in s.split('\t')]
+            if len(cols) >= 2:
+                table_rows.append(cols)
+                continue
+        elif s.startswith('|') and s.endswith('|') and s.count('|') >= 3:
+            cols = [c.strip() for c in s.split('|')[1:-1]]
+            if not all(c.startswith('-') for c in cols):
+                table_rows.append(cols)
+                continue
+        
+        flush_table()
+        
+        # Check if Heading
+        if re.match(r'^(?:📘|💡|🎯|🔥|Exam Important Points|Answer Explanation|\d+\.\s+)', s, re.IGNORECASE):
+            s_esc = html.escape(s)
+            html_parts.append(f'<div style="font-weight:700; color:#1e40af; margin-top:8px; margin-bottom:3px; font-size:0.83rem; display:flex; align-items:center; gap:4px;">{s_esc}</div>')
+        elif re.match(r'^(?:याद रखने की Trick|Trick|Exam Note|Important|ध्यान दें)[:\s]', s, re.IGNORECASE):
+            s_esc = html.escape(s)
+            html_parts.append(f'<div style="background:#fffbeb; border:1px solid #fde68a; border-left:3px solid #f59e0b; padding:5px 9px; border-radius:4px; margin:6px 0; font-size:0.79rem; color:#92400e; font-weight:600;">💡 {s_esc}</div>')
+        elif s.startswith(('•', '-', '*')):
+            item_text = re.sub(r'^[•\-\*]\s*', '', s)
+            item_html = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', html.escape(item_text))
+            html_parts.append(f'<div style="margin-left:8px; margin-bottom:2px; font-size:0.80rem; line-height:1.4;"><span style="color:#2563eb; margin-right:4px;">•</span>{item_html}</div>')
+        else:
+            p_html = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', html.escape(s))
+            html_parts.append(f'<div style="margin-bottom:3px; font-size:0.80rem; line-height:1.45;">{p_html}</div>')
+            
+    flush_table()
+    return ''.join(html_parts)
+
 

@@ -28,7 +28,8 @@ from mcq_parser import (
     parse_mcq_text,
     parse_csv_file,
     clean_option_text,
-    clean_question_text
+    clean_question_text,
+    format_study_notes_html
 )
 try:
     from mcq_parser import prepare_questions_list
@@ -378,8 +379,105 @@ div[data-testid="stVerticalBlockBorderWrapper"] button {
         border-color: #4a5568;
     }
 }
+/* Scrollable Study Notes Container */
+.notes-scroll {
+    max-height: 200px;
+    overflow-y: auto;
+    overflow-x: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 #f8fafc;
+}
+.notes-scroll::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+.notes-scroll::-webkit-scrollbar-track {
+    background: #f8fafc;
+    border-radius: 4px;
+}
+.notes-scroll::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 4px;
+}
+.notes-scroll::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}
+
+/* Styled Table for Study Notes */
+.notes-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.80rem;
+    margin: 8px 0;
+    background: #ffffff;
+    border-radius: 6px;
+    overflow: hidden;
+}
+.notes-table th {
+    background: #e0e7ff;
+    color: #1e3a8a;
+    font-weight: 700;
+    padding: 6px 10px;
+    border: 1px solid #c7d2fe;
+    text-align: left;
+}
+.notes-table td {
+    padding: 5px 10px;
+    border: 1px solid #e2e8f0;
+    color: #1e293b;
+}
+
+@media (prefers-color-scheme: dark) {
+    .notes-scroll {
+        scrollbar-color: #475569 #1e293b;
+    }
+    .notes-scroll::-webkit-scrollbar-track {
+        background: #1e293b;
+    }
+    .notes-scroll::-webkit-scrollbar-thumb {
+        background: #475569;
+    }
+    .notes-table {
+        background: #1e293b;
+    }
+    .notes-table th {
+        background: #312e81;
+        color: #e0e7ff;
+        border-color: #4338ca;
+    }
+    .notes-table td {
+        border-color: #334155;
+        color: #cbd5e1;
+    }
+}
 </style>
 """, unsafe_allow_html=True)
+
+# Study Notes Dialog Modal (Large screen popup)
+if hasattr(st, "dialog"):
+    @st.dialog("📖 Study Notes & Detailed Exam Facts", width="large")
+    def show_study_notes_modal(q_num: int, topic: str, notes_html: str):
+        st.markdown(
+            f"""<div style="display:flex; justify-content:space-between; align-items:center; border-bottom:2px solid #e2e8f0; padding-bottom:8px; margin-bottom:10px;">
+<div style="font-size:1.0rem; font-weight:700; color:#1e40af;">📌 Question {q_num} • {topic}</div>
+<div style="font-size:0.72rem; background:#eff6ff; color:#2563eb; padding:2px 8px; border-radius:12px; font-weight:600;">Full Study Notes & Tables</div>
+</div>""",
+            unsafe_allow_html=True
+        )
+        st.markdown(
+            f"""<div class="notes-scroll" style="max-height:68vh; overflow-y:auto; overflow-x:auto; padding:6px 4px;">
+{notes_html}
+</div>""",
+            unsafe_allow_html=True
+        )
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("✕ Close Notes (बंद करें)", key="close_notes_dialog_btn", type="primary", use_container_width=True):
+            st.rerun()
+else:
+    def show_study_notes_modal(q_num: int, topic: str, notes_html: str):
+        st.info(f"Question {q_num} • {topic}")
+        st.markdown(notes_html, unsafe_allow_html=True)
+
 
 
 # ==========================================
@@ -700,6 +798,10 @@ if st.session_state.screen == "upload":
                 if text_to_parse:
                     with st.spinner("Parsing questions and identifying exam traps..."):
                         parsed = parse_mcq_text(text_to_parse)
+                        if not parsed or len(parsed) <= 1:
+                            csv_fallback = parse_csv_file(text_to_parse)
+                            if len(csv_fallback) > len(parsed or []):
+                                parsed = csv_fallback
                         if parsed:
                             if text_sync:
                                 db_res = db_manager.save_parsed_questions(
@@ -1215,6 +1317,15 @@ elif st.session_state.screen == "quiz":
                         )
                     st.rerun()
 
+                if existing_exp:
+                    with st.expander("📖 Peek Study Notes / Context (Optional)", expanded=False):
+                        formatted_peek_html = format_study_notes_html(existing_exp)
+                        st.markdown(f"""<div class="notes-scroll" style="max-height: 180px; overflow-y: auto; overflow-x: auto; padding: 8px 12px; background: #f8fafc; border-radius: 6px; border: 1px solid #e2e8f0; border-left: 3px solid #3b82f6;">
+{formatted_peek_html}
+</div>""", unsafe_allow_html=True)
+                        if st.button("🔍 Open Notes in Popup", key=f"pre_popup_{q_uid}", use_container_width=True):
+                            show_study_notes_modal(q_num, topic, formatted_peek_html)
+
             else:
                 # LOCKED STATE: Grid Feedback (supports 4 or 5 options)
                 boxes = []
@@ -1344,20 +1455,19 @@ elif st.session_state.screen == "quiz":
 
                 # Format study notes / description from CSV or PDF
                 if existing_exp:
-                    formatted_notes = []
-                    for nl in existing_exp.splitlines():
-                        nls = nl.strip()
-                        if nls:
-                            nl_bold = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', nls)
-                            formatted_notes.append(f"<div style='margin-bottom: 3px;'>{nl_bold}</div>")
-                    notes_content = "".join(formatted_notes)
-                    notes_snippet = f"""<div style="margin-top: 6px; padding: 10px 14px; background: #f8fafc; border-left: 3px solid #2563eb; border-radius: 6px; font-size: 0.82rem; line-height: 1.5; color: #1e293b;">
-<div style="font-weight: 700; color: #1e40af; margin-bottom: 4px; display: flex; align-items: center; gap: 4px;">
+                    formatted_notes_html = format_study_notes_html(existing_exp)
+                    is_long_note = len(existing_exp) > 220 or ("\t" in existing_exp) or ("|" in existing_exp)
+                    notes_snippet = f"""<div class="notes-scroll" style="margin-top: 8px; padding: 10px 14px; background: #f8fafc; border-left: 3px solid #2563eb; border-radius: 6px; font-size: 0.82rem; line-height: 1.5; color: #1e293b; max-height: 200px; overflow-y: auto; overflow-x: auto; border: 1px solid #e2e8f0; border-left: 3px solid #2563eb;">
+<div style="font-weight: 700; color: #1e40af; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
+<div style="display: flex; align-items: center; gap: 4px;">
 <span>📖</span> <span>Study Notes & Financial Facts</span>
 </div>
-<div>{notes_content}</div>
+{"<span style='font-size:0.70rem; color:#64748b; font-weight:500; background:#f1f5f9; padding:1px 6px; border-radius:4px;'>↕️ Scrollable</span>" if is_long_note else ""}
+</div>
+<div>{formatted_notes_html}</div>
 </div>"""
                 else:
+                    formatted_notes_html = ""
                     notes_snippet = ""
 
                 if explanation_data.get("source") == "gemini":
@@ -1420,7 +1530,13 @@ elif st.session_state.screen == "quiz":
                 st.markdown(exp_html, unsafe_allow_html=True)
 
                 # Action buttons for this specific question
-                col_filler, col_retry, col_reset = st.columns([0.48, 0.30, 0.22])
+                if existing_exp:
+                    col_notes_btn, col_retry, col_reset = st.columns([0.40, 0.36, 0.24])
+                    with col_notes_btn:
+                        if st.button("📖 Read Notes in Popup", key=f"popup_{q_uid}", use_container_width=True, help="Open complete study notes, facts & tables in a popup modal"):
+                            show_study_notes_modal(q_num, topic, formatted_notes_html)
+                else:
+                    col_filler, col_retry, col_reset = st.columns([0.48, 0.30, 0.22])
                 with col_retry:
                     # If answer is missing and not yet verified, provide prominent Solve with AI button
                     if not has_verified_key:
