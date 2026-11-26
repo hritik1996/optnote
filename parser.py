@@ -11,7 +11,8 @@ from mcq_parser import (
     normalize_option_letter,
     fallback_regex_parser,
     extract_answer_key,
-    prepare_questions_list
+    prepare_questions_list,
+    format_study_notes_html
 )
 
 __all__ = [
@@ -26,5 +27,6 @@ __all__ = [
     "normalize_option_letter",
     "fallback_regex_parser",
     "extract_answer_key",
-    "prepare_questions_list"
+    "prepare_questions_list",
+    "format_study_notes_html"
 ]

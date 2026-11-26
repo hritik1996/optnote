@@ -28,9 +28,17 @@ from mcq_parser import (
     parse_mcq_text,
     parse_csv_file,
     clean_option_text,
-    clean_question_text,
-    format_study_notes_html
+    clean_question_text
 )
+try:
+    from mcq_parser import format_study_notes_html
+except ImportError:
+    try:
+        from parser import format_study_notes_html
+    except ImportError:
+        def format_study_notes_html(text: str) -> str:
+            import html
+            return "<br>".join(html.escape(l) for l in str(text).splitlines())
 try:
     from mcq_parser import prepare_questions_list
 except ImportError:
