@@ -706,16 +706,77 @@ def get_topics_for_subject(subject_id: int) -> List[Dict[str, Any]]:
         cur.close()
         conn.close()
 
+def get_all_topics_with_counts(subject_id: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Returns all topics with question and trap counts, optionally filtered by subject."""
+    init_db()
+    conn = get_connection()
+    is_pg = (_ACTIVE_DB_TYPE == "postgres")
+    cur = conn.cursor()
+    try:
+        where_cond = "WHERE t.subject_id = %s" if (is_pg and subject_id) else ("WHERE t.subject_id = ?" if subject_id else "")
+        params = (subject_id,) if subject_id else ()
+        
+        query = f"""
+        SELECT 
+            t.id, t.name, t.slug,
+            s.id as subject_id, s.name as subject_name, s.icon as subject_icon,
+            COUNT(q.id) as question_count,
+            SUM(CASE WHEN (q.trap_info->>'is_trap')::boolean = true THEN 1 ELSE 0 END) as trap_count
+        FROM topics t
+        JOIN subjects s ON t.subject_id = s.id
+        LEFT JOIN questions q ON t.id = q.topic_id AND q.is_active = TRUE
+        {where_cond}
+        GROUP BY t.id, t.name, t.slug, s.id, s.name, s.icon
+        ORDER BY question_count DESC, t.name ASC;
+        """ if is_pg else f"""
+        SELECT 
+            t.id, t.name, t.slug,
+            s.id as subject_id, s.name as subject_name, s.icon as subject_icon,
+            COUNT(q.id) as question_count,
+            SUM(CASE WHEN q.trap_info LIKE '%\"is_trap\": true%' THEN 1 ELSE 0 END) as trap_count
+        FROM topics t
+        JOIN subjects s ON t.subject_id = s.id
+        LEFT JOIN questions q ON t.id = q.topic_id AND q.is_active = 1
+        {where_cond}
+        GROUP BY t.id, t.name, t.slug, s.id, s.name, s.icon
+        ORDER BY question_count DESC, t.name ASC;
+        """
+        cur.execute(query, params)
+        rows = cur.fetchall()
+        result = []
+        for r in rows:
+            if isinstance(r, dict):
+                result.append(r)
+            elif hasattr(r, "keys"):
+                result.append(dict(r))
+            else:
+                result.append({
+                    "id": r[0],
+                    "name": r[1],
+                    "slug": r[2],
+                    "subject_id": r[3],
+                    "subject_name": r[4],
+                    "subject_icon": r[5] or "🏷️",
+                    "question_count": r[6] or 0,
+                    "trap_count": r[7] or 0
+                })
+        return result
+    finally:
+        cur.close()
+        conn.close()
+
 def search_questions(
     query_text: str = "",
     subject_id: Optional[int] = None,
     topic_id: Optional[int] = None,
     trap_only: bool = False,
     limit: int = 50,
-    offset: int = 0
+    offset: int = 0,
+    order_by: str = "newest"
 ) -> Tuple[List[Dict[str, Any]], int]:
     """
     Searches questions by keyword (English/Hindi), subject, topic, and trap filter.
+    order_by: 'newest' (default: latest first), 'oldest' (earliest first), 'random', 'traps', 'alphabetical'.
     Returns: (list_of_questions, total_count)
     """
     init_db()
@@ -744,6 +805,19 @@ def search_questions(
         where_clauses.append("(q.trap_info->>'is_trap')::boolean = true" if is_pg else "q.trap_info LIKE '%\"is_trap\": true%'")
 
     where_sql = " AND ".join(where_clauses)
+
+    order_clause = "q.id DESC"
+    if order_by == "oldest":
+        order_clause = "q.id ASC"
+    elif order_by == "random":
+        order_clause = "RANDOM()"
+    elif order_by == "traps":
+        if is_pg:
+            order_clause = "(q.trap_info->>'is_trap')::boolean DESC, q.id DESC"
+        else:
+            order_clause = "(CASE WHEN q.trap_info LIKE '%\"is_trap\": true%' THEN 1 ELSE 0 END) DESC, q.id DESC"
+    elif order_by == "alphabetical":
+        order_clause = "q.question_text ASC"
     
     try:
         # Count total
@@ -762,7 +836,7 @@ def search_questions(
         LEFT JOIN subjects s ON q.subject_id = s.id
         LEFT JOIN topics t ON q.topic_id = t.id
         WHERE {where_sql}
-        ORDER BY q.id ASC
+        ORDER BY {order_clause}
         LIMIT {'%s' if is_pg else '?'} OFFSET {'%s' if is_pg else '?'};
         """
         page_params = list(params) + [limit, offset]

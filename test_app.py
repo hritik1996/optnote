@@ -556,5 +556,29 @@ Hindi: SBI कार्ड और Google Pay ने कौन-सा कार�
         self.assertEqual(len(qs_semi), 1)
         self.assertEqual(qs_semi[0]["correct_answer"], "C")
 
+    def test_topic_grid_and_newest_first_ordering(self):
+        import db_manager
+        db_manager.init_db()
+
+        # 1. Test get_all_topics_with_counts
+        topics = db_manager.get_all_topics_with_counts()
+        self.assertIsInstance(topics, list)
+        if topics:
+            t0 = topics[0]
+            self.assertIn("id", t0)
+            self.assertIn("name", t0)
+            self.assertIn("question_count", t0)
+            self.assertIn("subject_name", t0)
+
+        # 2. Test search_questions default newest first ordering
+        qs_newest, total = db_manager.search_questions(limit=5, order_by="newest")
+        if len(qs_newest) >= 2:
+            self.assertGreaterEqual(qs_newest[0]["db_id"], qs_newest[-1]["db_id"], "Newest first must return descending IDs")
+
+        # 3. Test search_questions oldest first
+        qs_oldest, _ = db_manager.search_questions(limit=5, order_by="oldest")
+        if len(qs_oldest) >= 2:
+            self.assertLessEqual(qs_oldest[0]["db_id"], qs_oldest[-1]["db_id"], "Oldest first must return ascending IDs")
+
 if __name__ == "__main__":
     unittest.main()

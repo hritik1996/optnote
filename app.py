@@ -387,6 +387,20 @@ div[data-testid="stVerticalBlockBorderWrapper"] button {
         border-color: #4a5568;
     }
 }
+.topic-badge-count {
+    font-size: 0.72rem;
+    font-weight: 700;
+    background: #e0e7ff;
+    color: #3730a3;
+    padding: 2px 7px;
+    border-radius: 12px;
+}
+@media (prefers-color-scheme: dark) {
+    .topic-badge-count {
+        background: #312e81;
+        color: #c7d2fe;
+    }
+}
 /* Scrollable Study Notes Container */
 .notes-scroll {
     max-height: 200px;
@@ -517,6 +531,10 @@ if "user_id" not in st.session_state:
     st.session_state.user_id = db_manager.DEFAULT_GUEST_USER_ID
 if "user_name" not in st.session_state:
     st.session_state.user_name = "Guest Learner"
+if "selected_grid_topic_id" not in st.session_state:
+    st.session_state.selected_grid_topic_id = None
+if "selected_grid_topic_name" not in st.session_state:
+    st.session_state.selected_grid_topic_name = "All Topics (सभी विषय)"
 
 # Auto-clean questions in memory, de-duplicate question numbers, and ensure unique uids (only once upon load)
 if st.session_state.questions and not st.session_state.get("questions_prepared", False):
@@ -671,12 +689,12 @@ if st.session_state.screen == "upload":
                 st.session_state.screen = "summary"
                 st.rerun()
 
-    tab_pdf, tab_csv, tab_text, tab_demo, tab_bank = st.tabs([
+    tab_bank, tab_pdf, tab_csv, tab_text, tab_demo = st.tabs([
+        "📚 Central Question Bank & Topic Grid",
         "📄 Upload Exam PDF",
         "📊 Upload CSV / Spreadsheet",
         "📝 Paste Raw Text / CSV",
-        "🚀 Instant Demo Test (20 Qs)",
-        "📚 Central Question Bank (PostgreSQL)"
+        "🚀 Instant Demo Test (20 Qs)"
     ])
 
     # Tab 1: Upload PDF
@@ -856,80 +874,186 @@ if st.session_state.screen == "upload":
                 st.session_state.active_source = "Demo Test Dataset"
                 st.rerun()
 
-    # Tab 5: Browse Database & Question Bank
+    # Tab: Browse Database & Question Bank with Visual Topic Grid
     with tab_bank:
-        st.markdown("##### 📚 Central Question Repository (PostgreSQL)")
-        st.caption("Browse saved MCQs across all subjects, search questions by keyword (English/Hindi), and launch custom test series.")
+        st.markdown("##### 📚 Central Question Repository & Topic Explorer")
+        st.caption("Select a topic card from the visual grid to explore related questions (newest first by default) or customize filters to launch a custom marathon.")
 
         overview = db_manager.get_subjects_overview()
         total_in_db = sum(s["question_count"] for s in overview)
+        all_topics = db_manager.get_all_topics_with_counts()
+        total_topics = len(all_topics)
 
-        # Subject Cards Row
+        # Subject & Overview Cards Row
         c_sub1, c_sub2, c_sub3 = st.columns(3)
         with c_sub1:
             st.metric("Total Questions in DB", f"{total_in_db:,}", f"{len(overview)} Subjects")
         with c_sub2:
-            top_sub = max(overview, key=lambda s: s["question_count"]) if overview and total_in_db > 0 else None
-            top_title = f"{top_sub['icon']} {top_sub['name'][:22]}" if top_sub else "No questions yet"
-            top_count = f"{top_sub['question_count']:,} Qs" if top_sub else "0 Qs"
-            st.metric("Top Subject", top_count, top_title)
+            st.metric("Topics Available", f"{total_topics} Topics", "Grid View Active")
         with c_sub3:
             db_engine = db_manager.get_active_db_type().capitalize()
             st.metric("Database Engine", db_engine, "mcq_bank (Port 5432)" if db_engine == "Postgres" else "Local SQLite")
 
         st.divider()
 
-        # Search Controls
-        col_s1, col_s2, col_s3 = st.columns([1.5, 1.2, 1])
-        with col_s1:
-            search_kw = st.text_input("🔍 Search by Keyword (English / Hindi / Option)", placeholder="e.g. computer, inflation, spelling, etc.")
-        with col_s2:
-            sub_options = [("All Subjects", None)] + [(f"{s['icon']} {s['name']}", s['id']) for s in overview]
-            selected_sub_label = st.selectbox("Filter by Subject:", [o[0] for o in sub_options])
-            selected_sub_id = next(o[1] for o in sub_options if o[0] == selected_sub_label)
-        with col_s3:
-            topic_options = [("All Topics", None)]
-            if selected_sub_id:
-                topics_list = db_manager.get_topics_for_subject(selected_sub_id)
-                topic_options += [(f"{t['name']} ({t['question_count']})", t['id']) for t in topics_list]
-            selected_top_label = st.selectbox("Filter by Topic:", [o[0] for o in topic_options])
-            selected_top_id = next(o[1] for o in topic_options if o[0] == selected_top_label)
+        # -------------------------------------------------------------
+        # TOPIC GRID SECTION
+        # -------------------------------------------------------------
+        st.markdown("###### 🏷️ Topic Grid — Select a Topic to Practice (विषय ग्रिड)")
 
-        col_f1, col_f2 = st.columns([1, 1])
-        with col_f1:
-            bank_trap_only = st.checkbox("🔥 Exam Traps Only", value=False, key="db_filter_trap")
-        with col_f2:
-            max_limit = st.slider("Max Questions to Load:", min_value=10, max_value=200, value=50, step=10, key="db_limit_slider")
+        col_sub_f1, col_sub_f2 = st.columns([1.5, 2.5])
+        with col_sub_f1:
+            sub_filter_options = [("All Subjects (सभी विषय)", None)] + [(f"{s['icon']} {s['name']}", s['id']) for s in overview]
+            grid_sub_sel = st.selectbox("Filter Topics by Subject:", [o[0] for o in sub_filter_options], key="grid_sub_filter")
+            grid_sub_id = next(o[1] for o in sub_filter_options if o[0] == grid_sub_sel)
 
-        # Query Database
+        if grid_sub_id:
+            display_topics = [t for t in all_topics if t.get("subject_id") == grid_sub_id]
+        else:
+            display_topics = all_topics
+
+        topic_items = [{
+            "id": None,
+            "name": "All Topics (सभी विषय)",
+            "subject_name": "Combined Practice across all subjects",
+            "subject_icon": "⭐",
+            "question_count": total_in_db
+        }] + display_topics
+
+        # Render in 3-column Grid
+        cols_per_row = 3
+        for row_start in range(0, len(topic_items), cols_per_row):
+            row_slice = topic_items[row_start:row_start + cols_per_row]
+            cols = st.columns(cols_per_row)
+            for i, topic in enumerate(row_slice):
+                with cols[i]:
+                    is_active = (st.session_state.selected_grid_topic_id == topic["id"])
+                    with st.container(border=True):
+                        c_t1, c_t2 = st.columns([2.3, 0.9])
+                        with c_t1:
+                            st.markdown(f"**{topic.get('subject_icon', '🏷️')} {topic['name']}**")
+                            st.caption(topic.get("subject_name", ""))
+                        with c_t2:
+                            st.markdown(f"<span class='topic-badge-count' style='float:right;'>{topic['question_count']} Qs</span>", unsafe_allow_html=True)
+                        
+                        btn_label = "✓ Selected" if is_active else "Select Topic"
+                        btn_type = "primary" if is_active else "secondary"
+                        if st.button(btn_label, key=f"btn_topic_{topic['id']}_{row_start}_{i}", type=btn_type, use_container_width=True):
+                            st.session_state.selected_grid_topic_id = topic["id"]
+                            st.session_state.selected_grid_topic_name = topic["name"]
+                            st.rerun()
+
+        st.divider()
+
+        # -------------------------------------------------------------
+        # FILTER, SORT & QUESTIONS LIST SECTION
+        # -------------------------------------------------------------
+        active_topic_label = st.session_state.get("selected_grid_topic_name", "All Topics (सभी विषय)")
+        st.markdown(f"##### 🎯 Questions in: **{active_topic_label}**")
+
+        col_sort, col_search, col_traps, col_limit = st.columns([1.3, 1.5, 0.8, 0.8])
+        with col_sort:
+            sort_choice = st.selectbox(
+                "Sort Order (क्रम):",
+                options=[
+                    "⚡ Newest First (सबसे नए पहले)",
+                    "⏳ Oldest First (पुराने पहले)",
+                    "🔀 Random Practice (रैंडम अभ्यास)",
+                    "🔥 Traps First (कठिन जाल पहले)",
+                    "🔤 Alphabetical (A to Z)"
+                ],
+                index=0,
+                key="grid_sort_choice",
+                help="Default is Newest First: newly uploaded questions appear at top, oldest at bottom."
+            )
+        with col_search:
+            kw_search = st.text_input("🔍 Search within Topic:", placeholder="e.g. RBI, inflation, spelling...", key="grid_kw_search")
+        with col_traps:
+            traps_only = st.checkbox("🔥 Traps Only", value=False, key="grid_trap_only_check")
+        with col_limit:
+            limit_choice = st.selectbox("Load Limit:", [10, 20, 50, 100, 200, "All"], index=2, key="grid_limit_choice")
+
+        order_by_map = {
+            "⚡ Newest First (सबसे नए पहले)": "newest",
+            "⏳ Oldest First (पुराने पहले)": "oldest",
+            "🔀 Random Practice (रैंडम अभ्यास)": "random",
+            "🔥 Traps First (कठिन जाल पहले)": "traps",
+            "🔤 Alphabetical (A to Z)": "alphabetical"
+        }
+        order_by_key = order_by_map.get(sort_choice, "newest")
+        max_q_limit = 99999 if limit_choice == "All" else int(limit_choice)
+
         db_qs, total_matched = db_manager.search_questions(
-            query_text=search_kw,
-            subject_id=selected_sub_id,
-            topic_id=selected_top_id,
-            trap_only=bank_trap_only,
-            limit=max_limit
+            query_text=kw_search,
+            subject_id=grid_sub_id,
+            topic_id=st.session_state.selected_grid_topic_id,
+            trap_only=traps_only,
+            limit=max_q_limit,
+            order_by=order_by_key
         )
 
-        st.info(f"Found **{total_matched:,} matching questions** in Database. Ready to practice **{len(db_qs)}**.")
+        st.info(f"📊 Found **{total_matched:,} matching questions** for **{active_topic_label}** • Showing **{len(db_qs)}** (Sorted: **{sort_choice.split('(')[0].strip()}**)")
 
         if db_qs:
-            if st.button(f"🚀 Launch Test Series with these {len(db_qs)} Questions", type="primary", use_container_width=True):
-                st.session_state.questions = prepare_questions_list(db_qs)
-                st.session_state.questions_prepared = True
-                st.session_state.user_answers = {}
-                st.session_state.current_batch_idx = 0
-                st.session_state.screen = "batch_setup"
-                st.session_state.active_source = f"Database: {selected_sub_label} ({len(db_qs)} Qs)"
-                st.rerun()
+            col_launch, col_reset = st.columns([2.5, 1])
+            with col_launch:
+                if st.button(f"🚀 Launch Marathon with these {len(db_qs)} Questions", type="primary", use_container_width=True, key="launch_from_grid_btn"):
+                    st.session_state.questions = prepare_questions_list(db_qs)
+                    st.session_state.questions_prepared = True
+                    st.session_state.user_answers = {}
+                    st.session_state.current_batch_idx = 0
+                    st.session_state.screen = "batch_setup"
+                    st.session_state.active_source = f"Topic: {active_topic_label} ({len(db_qs)} Qs)"
+                    st.rerun()
+            with col_reset:
+                if st.session_state.selected_grid_topic_id is not None:
+                    if st.button("🔄 Show All Topics", use_container_width=True, key="reset_grid_btn"):
+                        st.session_state.selected_grid_topic_id = None
+                        st.session_state.selected_grid_topic_name = "All Topics (सभी विषय)"
+                        st.rerun()
 
-            # Preview matching questions
-            with st.expander(f"👁️ Preview Questions ({min(5, len(db_qs))} shown)", expanded=False):
-                for preview_q in db_qs[:5]:
-                    st.markdown(f"**Q. {preview_q['question_text']}**")
-                    opts = preview_q.get("options", {})
-                    opt_line = " | ".join(f"({k}) {v}" for k, v in sorted(opts.items()))
-                    st.caption(f"{opt_line} — **Ans: ({preview_q['correct_answer']})**")
-                    st.divider()
+            # Interactive Questions Preview
+            with st.expander(f"👁️ View Matching Questions ({len(db_qs)} Loaded — Scroll & Review)", expanded=True):
+                for idx, q_item in enumerate(db_qs, 1):
+                    with st.container(border=True):
+                        trap_tag = '<span style="font-size:0.70rem; background:#fee2e2; color:#b91c1c; font-weight:700; padding:1px 6px; border-radius:3px;">🔥 TRAP</span>' if q_item.get("trap_info", {}).get("is_trap") else ""
+                        st.markdown(f"""<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+<div>
+<span style="font-size:0.75rem; background:#e0e7ff; color:#3730a3; font-weight:700; padding:2px 6px; border-radius:3px; margin-right:4px;">Q{idx}</span>
+<span style="font-size:0.75rem; background:#fef3c7; color:#92400e; font-weight:600; padding:2px 6px; border-radius:3px; margin-right:4px;">🏷️ {q_item.get('topic', 'General')}</span>
+<span style="font-size:0.75rem; color:#64748b;">• {q_item.get('subject', '')}</span>
+{trap_tag}
+</div>
+<div style="font-size:0.70rem; color:#94a3b8; font-weight:600;">DB #{q_item['db_id']}</div>
+</div>""", unsafe_allow_html=True)
+
+                        if q_item.get("is_bilingual") and q_item.get("hindi_text"):
+                            st.markdown(f"""<div style="font-size:0.87rem; font-weight:600; line-height:1.35; margin-bottom:3px;">
+<span style="font-size:0.64rem; font-weight:700; background:#e0e7ff; color:#3730a3; padding:1px 5px; border-radius:3px; margin-right:4px;">ENG</span>{q_item['question_text']}
+</div>
+<div style="font-size:0.83rem; font-weight:500; color:#334155; line-height:1.35; margin-bottom:4px;">
+<span style="font-size:0.64rem; font-weight:700; background:#fef3c7; color:#92400e; padding:1px 5px; border-radius:3px; margin-right:4px;">HIN</span>{q_item['hindi_text']}
+</div>""", unsafe_allow_html=True)
+                        else:
+                            st.markdown(f"**{q_item['question_text']}**")
+
+                        opts = q_item.get("options", {})
+                        opt_boxes = []
+                        ans_key = q_item.get("correct_answer", "")
+                        for opt_k in ["A", "B", "C", "D", "E"]:
+                            if opt_k in opts:
+                                is_ans = (opt_k == ans_key)
+                                cls = "option-box opt-correct" if is_ans else "option-box"
+                                chk_badge = "<span style='font-size:0.65rem; font-weight:700; color:#065f46;'>✓ CORRECT</span>" if is_ans else ""
+                                opt_boxes.append(f"""<div class="{cls}"><div><strong>({opt_k})</strong> {clean_option_text(opts[opt_k])}</div><div>{chk_badge}</div></div>""")
+                        st.markdown(f"""<div class="options-grid">{''.join(opt_boxes)}</div>""", unsafe_allow_html=True)
+
+                        exp_text = q_item.get("explanation") or q_item.get("study_notes")
+                        if exp_text:
+                            formatted_exp = format_study_notes_html(exp_text)
+                            st.markdown(f"""<div class="notes-scroll" style="margin-top:6px; padding:6px 10px; background:#f8fafc; border-left:3px solid #3b82f6; border-radius:5px; font-size:0.80rem; max-height:140px; overflow-y:auto; overflow-x:auto;">
+{formatted_exp}
+</div>""", unsafe_allow_html=True)
 
 
 # ==========================================
